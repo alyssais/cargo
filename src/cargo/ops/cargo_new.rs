@@ -9,6 +9,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
+use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -815,6 +816,29 @@ fn get_environment_variable(variables: &[&str]) -> Option<String> {
     variables.iter().filter_map(|var| env::var(var).ok()).next()
 }
 
+#[cfg(unix)]
+fn get_author_name_from_os() -> Option<String> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut search = env::var_os("USER")?;
+    search.push(":");
+
+    let f = File::open("/etc/passwd").ok()?;
+    let line = BufReader::new(f)
+        .split(b'\n')
+        .filter_map(Result::ok)
+        .filter(|line| line.starts_with(search.as_bytes()))
+        .next()?;
+
+    let gecos = line.split(|c| *c == b':').nth(4)?;
+    String::from_utf8(gecos.into()).ok()
+}
+
+#[cfg(not(unix))]
+fn get_author_name_from_os() -> Option<String> {
+    None
+}
+
 fn discover_author(path: &Path) -> (Option<String>, Option<String>) {
     let git_config = find_git_config(path);
     let git_config = git_config.as_ref();
@@ -829,6 +853,7 @@ fn discover_author(path: &Path) -> (Option<String>, Option<String>) {
     ];
     let name = get_environment_variable(&name_variables[0..3])
         .or_else(|| git_config.and_then(|g| g.get_string("user.name").ok()))
+        .or_else(|| get_author_name_from_os())
         .or_else(|| get_environment_variable(&name_variables[3..]));
 
     let name = match name {
